@@ -6,7 +6,6 @@ import g4f
 import re
 import requests
 import feedparser
-import time
 import asyncio
 
 from typing import List
@@ -41,6 +40,8 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 arxiv_running = False
 habr_running = False
+arxiv_prev_id = None
+habr_prev_id = None
 
 def add_entry(message_id, post_id):
     # function for the editing sync to work
@@ -152,45 +153,68 @@ async def format_message(message: types.Message):
 async def parse_rss_feed(url):
     feed = feedparser.parse(url)
     entries = feed.entries
-    print(f"{len(entries)} entries")
 
     for entry in entries:
         title = entry.title
         link = entry.link
         description = entry.description
-        arxiv_post = title + "\n\n" + description + "\n\n" + link
-        print(f"Архив {arxiv_post}")
-        return arxiv_post
+        post = title + "\n\n" + description + "\n\n" + link
+        print(f"rss спарсил пост: {post}")
+        return post, link
 
 async def post_message(formatted_message):
    await formatted_message.send_copy(TELEGRAM_PRIVATENAME)
-   await asyncio.sleep(10)
+   # время между постами
+   print('спим 15 секунд')
+   await asyncio.sleep(15)
 
 @dp.channel_post_handler(content_types=ContentType.ANY)
 @retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
 async def new_channel_post(message: types.Message):
-    global arxiv_running
-    global habr_running
+    global arxiv_running, arxiv_prev_id
+    global habr_running, habr_prev_id
     if message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Arxiv':
         print('Старт архив')
         arxiv_running = True
+
         while arxiv_running:
-            arxiv_post = await parse_rss_feed("http://export.arxiv.org/rss/cs.AI")
+            arxiv_post, link = await parse_rss_feed("http://export.arxiv.org/rss/cs.AI")
+            post_id = link.split('/')[-1]
+            if post_id == arxiv_prev_id:
+               print("Post ID matches previous, skipping post and waiting for 5 seconds...")
+               await asyncio.sleep(5)
+               continue
+
+            arxiv_prev_id = post_id
+
             message.text = arxiv_post
             formatted_message = await format_message(message)
             await post_message(formatted_message)
+            # время до проверки rss ленты
+            await asyncio.sleep(5)
     elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Habr':
         print('Старт хабр')
         habr_running = True
+        
         while habr_running:
-            habr_post = await parse_rss_feed("https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/")
+            habr_post, link = await parse_rss_feed("https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/")
+            post_id = link.split('/')[-1].split('=')[1].split('&')[0]
+            if post_id == habr_prev_id:
+               print("Post ID matches previous, skipping post and waiting for 5 seconds...")
+               await asyncio.sleep(5)
+               continue
+            
+            habr_prev_id = post_id
+
             message.text = habr_post
             formatted_message = await format_message(message)
             await post_message(formatted_message)
-    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'ArxivStop':
+            # время до проверки rss ленты
+            await asyncio.sleep(5)
+    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'StopArxiv':
         print('Стоп архив')
         arxiv_running = False
-    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'HabrStop':
+    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'StopHabr':
         print('Стоп хабр')
         habr_running = False
     else:
