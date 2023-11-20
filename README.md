@@ -1,9 +1,12 @@
 # Telegram to VK
-Redirect your telegram channel messages to your VK group automatically!
+RSS telegram parser with GPT in python. 
 
-Supports editing on-the-fly & copies your photos/videos to the VK aswell.
-
-![example of the forward functionality](/example.png)
+# Features
+1. Fetch Arxiv and Habr RSS feeds 
+2. Article summarize with gpt
+3. Posts to Telegram, repost to VK
+4. Supports editing on-the-fly & copies your photos/videos to the VK aswell.
+5. Admin commands for turning on/off rss feeds
 
 ## Setup
 1. `git clone https://github.com/AcademAI/telega2vkposter` 
