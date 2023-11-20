@@ -122,10 +122,12 @@ async def get_response(text):
         print(e)
         raise e
 
+
+
+
 @retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
 async def format_message(message: types.Message):
     text = message.text
-
     if not message.photo:
         link = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text)
         if link:
@@ -144,8 +146,10 @@ async def format_message(message: types.Message):
             message.text = response
             return message
     else:
+        text = message["caption"]
         response = await get_response(text)
         message.text = response
+        print(message)
         return message
 
 # https://github.com/IgorVolochay/Telegram-Parser-Bot/blob/main/Bot.py - habr parser
@@ -163,7 +167,13 @@ async def parse_rss_feed(url):
         return post, link
 
 async def post_message(formatted_message):
-   await formatted_message.send_copy(TELEGRAM_PRIVATENAME)
+   photo = formatted_message['photo']
+   largest_photo = max(photo, key=lambda p: p['width'] * p['height'])
+   photo_file_id = largest_photo['file_id']
+
+   # Send the photo to the target channel
+   await bot.send_photo(TELEGRAM_PRIVATENAME, photo=photo_file_id)
+   await bot.send_message(TELEGRAM_PRIVATENAME,  text=formatted_message.text)
    # время между постами
    print('спим 15 секунд')
    await asyncio.sleep(15)
