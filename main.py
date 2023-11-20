@@ -2,15 +2,24 @@ import logging
 import os
 import random
 import tenacity
+import g4f
+import re
+import requests
+import feedparser
+import time
+import asyncio
 
 from typing import List
+from tenacity import retry, stop_after_attempt
 
+from linkpreview import link_preview
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ContentType
 from aiogram_media_group import media_group_handler, MediaGroupFilter
 from dotenv import load_dotenv
 from requests.exceptions import ConnectionError
+from aiohttp.client_exceptions import ServerDisconnectedError
 from vk_api import VkApi, upload
 
 load_dotenv()
@@ -18,6 +27,9 @@ logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 TELEGRAM_CHANNEL_USERNAME = os.getenv('TELEGRAM_CHANNEL_USERNAME')
+TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
+TELEGRAM_SOURCE_PUBLICNAME = os.getenv('TELEGRAM_SOURCE_PUBLICNAME')
+TELEGRAM_PRIVATENAME = os.getenv('TELEGRAM_PRIVATENAME')
 VK_API_TOKEN = os.getenv('VK_API_TOKEN')
 VK_GROUP_ID = os.getenv('VK_GROUP_ID')
 
@@ -27,7 +39,8 @@ uploader = upload.VkUpload(vk)
 bot = Bot(token=TELEGRAM_API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-
+arxiv_running = False
+habr_running = False
 
 def add_entry(message_id, post_id):
     # function for the editing sync to work
@@ -46,9 +59,8 @@ def get_entry(message_id) -> int:
     raise KeyError(f'{message_id} is not in the file!')
 
 
-@tenacity.retry(stop=tenacity.stop_after_attempt(3), retry=tenacity.retry_if_exception_type(ConnectionError))
+@tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_fixed(1), retry=tenacity.retry_if_exception_type(ConnectionError))
 def create_vk_post(text: str, message_id, photo_list=None, video_list=None):
-    # creates a vk publication with your text, photo/video list and references the original telegram message
     photos, videos = [], []
     if photo_list:
         photos = uploader.photo_wall(photos=photo_list, group_id=VK_GROUP_ID)
@@ -65,9 +77,7 @@ def create_vk_post(text: str, message_id, photo_list=None, video_list=None):
         message=text, from_group=1, attachments=attachments,
         owner_id=f'-{VK_GROUP_ID}', copyright=f'https://{TELEGRAM_CHANNEL_USERNAME}.t.me/{message_id}'
     )
-
     add_entry(message_id, post['post_id'])
-
 
 def edit_vk_post(post_id, new_text, message_id):
     # getting data from the original post
@@ -83,6 +93,110 @@ def edit_vk_post(post_id, new_text, message_id):
         attachments=attachments
     )
 
+
+
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
+async def get_image(link):
+    try:
+        preview = link_preview(link)
+        image = preview.image
+        print(f'КАРТИНКА ФУНКЦИЯ {image}')
+        return image
+    except Exception as e:
+        print(f'Error: {e}')
+        raise
+   
+
+@retry(stop=stop_after_attempt(5), wait=tenacity.wait_fixed(60))
+async def get_response(text):
+    try:
+        response = await g4f.ChatCompletion.create_async(
+            model=g4f.models.default,
+            messages=[{"role": "user", "content": f"Don't mention the task in your reply. Create a short, interesting, nicely formatted with little of emojies post in Russian about {text}. Include theme, description, usecases and a link in the end if its present in text."}],
+            provider=g4f.Provider.You,
+        )
+        print(response)
+        return response
+    except Exception as e:
+        print(e)
+        raise e
+
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
+async def format_message(message: types.Message):
+    text = message.text
+
+    if not message.photo:
+        link = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text)
+        if link:
+            image = await get_image(link[0]) if link else await get_image(link)
+            print(f'КАРТИНКА ВЕРНУЛАСЬ {image}')
+            response = requests.get(image)
+            image = response.content
+            print(f'КАРТИНКА скачалась? {image}')
+            message.photo = image
+
+            response = await get_response(text)
+            message.text = response
+            return message
+        else:
+            response = await get_response(text)
+            message.text = response
+            return message
+    else:
+        response = await get_response(text)
+        message.text = response
+        return message
+
+# https://github.com/IgorVolochay/Telegram-Parser-Bot/blob/main/Bot.py - habr parser
+#TODO добавить проверки на дублирование постов
+async def parse_rss_feed(url):
+    feed = feedparser.parse(url)
+    entries = feed.entries
+    print(f"{len(entries)} entries")
+
+    for entry in entries:
+        title = entry.title
+        link = entry.link
+        description = entry.description
+        arxiv_post = title + "\n\n" + description + "\n\n" + link
+        print(f"Архив {arxiv_post}")
+        return arxiv_post
+
+async def post_message(formatted_message):
+   await formatted_message.send_copy(TELEGRAM_PRIVATENAME)
+   await asyncio.sleep(10)
+
+@dp.channel_post_handler(content_types=ContentType.ANY)
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
+async def new_channel_post(message: types.Message):
+    global arxiv_running
+    global habr_running
+    if message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Arxiv':
+        print('Старт архив')
+        arxiv_running = True
+        while arxiv_running:
+            arxiv_post = await parse_rss_feed("http://export.arxiv.org/rss/cs.AI")
+            message.text = arxiv_post
+            formatted_message = await format_message(message)
+            await post_message(formatted_message)
+    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Habr':
+        print('Старт хабр')
+        habr_running = True
+        while habr_running:
+            habr_post = await parse_rss_feed("https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/")
+            message.text = habr_post
+            formatted_message = await format_message(message)
+            await post_message(formatted_message)
+    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'ArxivStop':
+        print('Стоп архив')
+        arxiv_running = False
+    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'HabrStop':
+        print('Стоп хабр')
+        habr_running = False
+    else:
+        print('Пришел пост')
+        formatted_message = await format_message(message)
+        await post_message(formatted_message)
 
 @dp.channel_post_handler(MediaGroupFilter(), content_types=ContentType.ANY)
 @media_group_handler
