@@ -1,15 +1,14 @@
 # Telegram to VK
-RSS telegram parser with GPT in python. 
+RSS feed parser with GPT to post in your channel
 
 # Features
 1. Fetch Arxiv and Habr RSS feeds 
 2. Article summarize with gpt4free
-3. Posts to Telegram, repost to VK
-4. Supports editing on-the-fly & copies your photos/videos to the VK aswell.
-5. Admin commands for turning on/off rss feeds
+3. Posts to Telegram
+4. Admin commands for turning on/off rss feeds
 
 ## Setup
-1. `git clone https://github.com/AcademAI/telega2vkposter` 
+1. `git clone https://github.com/AcademAI/rss_gpt_telegram` 
 2. Fill in the `.env` file with values
 
 2 options from here:
@@ -22,6 +21,6 @@ python main.py
 
 ### Via Docker:
 ```
-docker build --tag telegram_to_vk . 
-docker run telegram_to_vk
+docker build --tag rss_gpt_tg . 
+docker run rss_gpt_tg
 ```
