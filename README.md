@@ -1,4 +1,4 @@
-# Telegram to VK
+# RSS to Telegram with GPT
 RSS feed parser with GPT to post in your channel
 
 # Features
