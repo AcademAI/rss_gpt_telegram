@@ -98,13 +98,14 @@ async def new_channel_post(message: types.Message):
 
         while arxiv_running:
             arxiv_post, link = await parse_rss_feed("http://export.arxiv.org/rss/cs.AI")
-            post_id = link.split('/')[-1]
-            if post_id == arxiv_prev_id:
-               print("Post ID matches previous, skipping post and waiting for 1 hour...")
-               await asyncio.sleep(10)
+            arxiv_post_id = link.split('/')[-1]
+            if arxiv_post_id == arxiv_prev_id:
+               print(f"{arxiv_post_id} == {arxiv_prev_id}, skip")
+               
+               await asyncio.sleep(1000)
                continue
 
-            arxiv_prev_id = post_id
+            arxiv_prev_id = arxiv_post_id
 
             message.text = arxiv_post
             formatted_message = await format_message(message)
@@ -116,13 +117,13 @@ async def new_channel_post(message: types.Message):
         
         while habr_running:
             habr_post, link = await parse_rss_feed("https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/")
-            post_id = link.split('/')[-1].split('=')[1].split('&')[0]
-            if post_id == habr_prev_id:
-               print("Post ID matches previous, skipping post and waiting for 1 hour")
-               await asyncio.sleep(10)
+            habr_post_id = link.split('/')[-1].split('=')[1].split('&')[0]
+            if habr_post_id == habr_prev_id:
+               print(f"{habr_post_id} == {habr_prev_id}, skip")
+               await asyncio.sleep(500)
                continue
             
-            habr_prev_id = post_id
+            habr_prev_id = habr_post_id
 
             message.text = habr_post
             formatted_message = await format_message(message)
