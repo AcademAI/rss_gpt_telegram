@@ -1,10 +1,12 @@
 import logging
 import os
+import re
 import tenacity
 import g4f
 import time
 import feedparser
 import asyncio
+import shelve
 
 from tenacity import retry, stop_after_attempt
 from aiogram import Bot, Dispatcher, types, executor
@@ -18,22 +20,18 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
-TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
-TELEGRAM_SOURCE_PUBLICNAME = os.getenv('TELEGRAM_SOURCE_PUBLICNAME')
+TELEGRAM_POST_BRIDGE = os.getenv('TELEGRAM_POST_BRIDGE')
+TELEGRAM_TARGET_CHANNEL = os.getenv('TELEGRAM_TARGET_CHANNEL')
+
 PROXY_LOGIN = os.getenv('PROXY_LOGIN')
 PROXY_PASSWORD = os.getenv('PROXY_PASSWORD')
 PROXY_IP = os.getenv('PROXY_IP')
 PROXY_PORT = os.getenv('PROXY_PORT')
 
-
+db = shelve.open('data.db', writeback=True)
 bot = Bot(token=TELEGRAM_API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-arxiv_running = False
-habr_running = False
-arxiv_prev_id = None
-habr_prev_id = None
-
 
 
 @retry(stop=stop_after_attempt(5), wait=tenacity.wait_fixed(60))
@@ -87,58 +85,79 @@ async def parse_rss_feed(url):
         print(f"\nrss спарсил пост: \n\n {post}")
         return post, link
 
-@dp.channel_post_handler(content_types=ContentType.ANY)
+def add_post_to_db(msg_id, message_text):
+    try:
+        new_id = max(int(k) for k in db.keys()
+                     if k.isdigit()) + 1
+    except:
+        new_id = 1
+    db[str(new_id)] = {
+        'message_id': msg_id,
+        'message_text': message_text,
+    }
+    return new_id
+
+
 @retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
-async def new_channel_post(message: types.Message):
-    global arxiv_running, arxiv_prev_id
-    global habr_running, habr_prev_id
-    if message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Arxiv':
-        print('Старт архив')
-        arxiv_running = True
+async def send_to_channel():
+    urls = ["http://export.arxiv.org/rss/cs.AI", "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/"]
+    prev_ids = {"http://export.arxiv.org/rss/cs.AI": None, "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/": None}
 
-        while arxiv_running:
-            arxiv_post, link = await parse_rss_feed("http://export.arxiv.org/rss/cs.AI")
-            arxiv_post_id = link.split('/')[-1]
-            if arxiv_post_id == arxiv_prev_id:
-               print(f"{arxiv_post_id} == {arxiv_prev_id}, skip")
-               
-               await asyncio.sleep(1000)
-               continue
+    while True:
+        for url in urls:
+            rss_post, link = await parse_rss_feed(url)
+            rss_post_id = link.split('/')[-1].split('=')[1].split('&')[0] if url == "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/" else link.split('/')[-1]
 
-            arxiv_prev_id = arxiv_post_id
+            # Add check for None
+            if rss_post_id is None:
+                print(f"rss_post_id is None for {url}, skipping")
+                await asyncio.sleep(10)
+                continue
 
-            message.text = arxiv_post
-            formatted_message = await format_message(message)
-            await bot.send_message(TELEGRAM_CHANNEL_ID,  text=formatted_message.text)
+            if rss_post_id == prev_ids[url]:
+                print(f"{rss_post_id} == {prev_ids[url]}, skip")
+                await asyncio.sleep(10)
+                continue
 
-    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'Habr':
-        print('Старт хабр')
-        habr_running = True
-        
-        while habr_running:
-            habr_post, link = await parse_rss_feed("https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/")
-            habr_post_id = link.split('/')[-1].split('=')[1].split('&')[0]
-            if habr_post_id == habr_prev_id:
-               print(f"{habr_post_id} == {habr_prev_id}, skip")
-               await asyncio.sleep(500)
-               continue
+            prev_ids[url] = rss_post_id
             
-            habr_prev_id = habr_post_id
+            msg = types.Message()
+            msg.text = rss_post
+            msg_id = msg.message_id
 
-            message.text = habr_post
-            formatted_message = await format_message(message)
-            await bot.send_message(TELEGRAM_CHANNEL_ID,  text=formatted_message.text)
+            formatted_message = await format_message(msg)
+            try:
+                post_id = add_post_to_db(msg_id, formatted_message.text)
+                await bot.send_message(TELEGRAM_POST_BRIDGE, text=formatted_message.text)
+                await bot.send_message(TELEGRAM_POST_BRIDGE, text=post_id)
+            except Exception as e:
+                print(f"Failed to send post {e}")
 
-    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'StopArxiv':
-        print('Стоп архив')
-        arxiv_running = False
-    elif message.chat.username in TELEGRAM_SOURCE_PUBLICNAME and message.text == 'StopHabr':
-        print('Стоп хабр')
-        habr_running = False
-    else:
-        print('Пришел пост')
-        formatted_message = await format_message(message)
-        await bot.send_message(TELEGRAM_CHANNEL_ID,  text=formatted_message.text)
+@dp.channel_post_handler(regexp=r"\d+\+")
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
+async def handle_post(message: types.Message):
+    if message.chat and str(message.chat.id) == str(TELEGRAM_POST_BRIDGE):
+        post_id = str(message.text).strip('+')
+        post = db.get(post_id)
+        if post is None:
+            await bot.send_message(TELEGRAM_POST_BRIDGE, text='`ERROR NO POST ID IN DB`')
+            return
+        try:
+            msg = types.Message()
+            msg.text = post['message_text']
+            await bot.send_message(TELEGRAM_TARGET_CHANNEL,  text=msg.text)
+            await bot.send_message(TELEGRAM_POST_BRIDGE, text='`SUCCESS`')
+
+        except Exception as e:
+            await bot.send_message(TELEGRAM_POST_BRIDGE, text='`ERROR`')
+
+async def main():
+   await asyncio.gather(
+       dp.start_polling(),
+       send_to_channel()
+   )
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+   asyncio.run(main())
+
+
