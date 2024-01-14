@@ -5,6 +5,7 @@ Make unique posts with GPT off RSS feeds for your telegram channel!
 1. Fetch Arxiv and Habr RSS feeds 
 2. Article summarize with gpt4free
 3. Control posts in bridge channel
+4. Use HTTP proxy to access GPT
 
 ## Setup
 1. `git clone https://github.com/AcademAI/rss_gpt_telegram` 
