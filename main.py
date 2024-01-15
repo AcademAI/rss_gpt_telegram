@@ -73,17 +73,22 @@ async def format_message(message: types.Message):
         #print(message)
         return message
 
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
 async def parse_rss_feed(url):
     feed = feedparser.parse(url)
     entries = feed.entries
 
-    for entry in entries:
-        title = entry.title
-        link = entry.link
-        description = entry.description
-        post = title + "\n\n" + description + "\n\n" + link
-        print(f"\nrss спарсил пост: \n\n {post}")
-        return post, link
+    if not entries:
+        print(f"No entries found in feed {url}")
+        return None, None
+
+    entry = entries[0]
+    title = entry.title
+    link = entry.link
+    description = entry.description
+    post = title + "\n\n" + description + "\n\n" + link
+    print(f"\nrss спарсил пост: \n\n {post}")
+    return post, link
 
 def add_post_to_db(msg_id, message_text):
     try:
@@ -106,17 +111,22 @@ async def send_to_channel():
     while True:
         for url in urls:
             rss_post, link = await parse_rss_feed(url)
+
+            if rss_post is None or link is None:
+                print(f"Failed to parse RSS feed {url}")
+                await asyncio.sleep(21600)
+                continue
+
             rss_post_id = link.split('/')[-1].split('=')[1].split('&')[0] if url == "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/" else link.split('/')[-1]
 
-            # Add check for None
             if rss_post_id is None:
                 print(f"rss_post_id is None for {url}, skipping")
-                await asyncio.sleep(10)
+                await asyncio.sleep(21600)
                 continue
 
             if rss_post_id == prev_ids[url]:
                 print(f"{rss_post_id} == {prev_ids[url]}, skip")
-                await asyncio.sleep(10)
+                await asyncio.sleep(21600)
                 continue
 
             prev_ids[url] = rss_post_id
@@ -159,5 +169,3 @@ async def main():
 
 if __name__ == '__main__':
    asyncio.run(main())
-
-
