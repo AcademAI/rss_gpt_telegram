@@ -51,7 +51,7 @@ async def get_response(text):
             proxy=f'http://{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_IP}:{PROXY_PORT}'
             
         )
-        print('\nGPT сделал пост уникальным\n')
+        print('\nGPT сделал пост уникальным \n')
         return response
     except Exception as e:
         print(e)
