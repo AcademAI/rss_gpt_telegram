@@ -114,7 +114,6 @@ async def send_to_channel():
 
             if rss_post is None or link is None:
                 print(f"Failed to parse RSS feed {url}")
-                await asyncio.sleep(21600)
                 continue
 
             rss_post_id = link.split('/')[-1].split('=')[1].split('&')[0] if url == "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/" else link.split('/')[-1]
