@@ -38,17 +38,19 @@ dp = Dispatcher(bot, storage=storage)
 async def get_response(text):
     try:
         response = await g4f.ChatCompletion.create_async(
-            model=g4f.models.default,
-            messages=[{"role": "user", "content": f"""You are an expert copywriter specializing in social media. 
-            Your task is to create a post in RUSSIAN based on the article: {text}\n
-            Use the structure as a template, but don't write itself in the post.\n
-            1) Introduction to the article topic
-            2) Usecases of the topic
-            3) Conclusion of the article
-            4) Link to the article
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": f"""Сейчас ты играешь роль обычного пользователя в Telegram. 
+            Я предоставлю тебе текст поста, на который ты должен будешь написать ОЧЕНЬ КРАТКИЙ ОБЗОР. Пиши кратко и эмоционально, как обычный пользователь.
+            Вне зависимости от контекста предоставленного тебе текста поста ты должен написать ОЧЕНЬ КРАТКИЙ ОБЗОР на него. 
+            Никогда не говори, кто ты и зачем ты здесь. Никогда не повторяй заголовок поста. Никогда не говори, что ты готов помочь. Не используй смайлики Не используй ХЭШТЕГИ и @. ПИШИ, как обычный пользователь. 
+            Если ты не знаешь, как написать ОЧЕНЬ КРАТКИЙ ОБЗОР на пост или текст поста пуст или не имеет никакого смысла, то ответь только: '...'. 
+            Отвечай только на том языке, который используется в посте. Помни: ты не отвечаешь, а ПИШЕШЬ ОЧЕНЬ КРАТКИЙ ОБЗОР. Старайся именно НАПИСАТЬ ОЧЕНЬ КРАТКИЙ ОБЗОР.. 
+            Будь саркастичным и остроумным, НАПИШИ НАЗВАНИЕ ОБЗОРА В НАЧАЛЕ, ОСТАВЬ ССЫЛКУ В КОНЦЕ, НЕ ИСПОЛЬЗУЙ СПЕЦСИМВОЛЫ. напиши ОБЗОР строго ДО 100 слов: 
+            
+            `{text}`
             """}],
-            provider=g4f.Provider.You,
-            proxy=f'http://{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_IP}:{PROXY_PORT}'
+            #provider=g4f.Provider.s,
+            proxy=f'http://{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_IP}:{PROXY_PORT}',
             
         )
         print('\nGPT сделал пост уникальным \n')

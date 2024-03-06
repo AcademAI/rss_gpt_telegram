@@ -2,3 +2,5 @@ files/
 venv/
 data.txt
 .env
+data.db.data
+data.db.dir
