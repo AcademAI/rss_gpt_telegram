@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import tenacity
-import g4f
+import openai
 import time
 import feedparser
 import asyncio
@@ -15,13 +15,15 @@ from aiogram.types import ContentType
 from dotenv import load_dotenv
 from aiohttp.client_exceptions import ServerDisconnectedError
 
-
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 TELEGRAM_POST_BRIDGE = os.getenv('TELEGRAM_POST_BRIDGE')
 TELEGRAM_TARGET_CHANNEL = os.getenv('TELEGRAM_TARGET_CHANNEL')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+BASE_URL = os.getenv('BASE_URL', "https://api.01.ai/v1")
+MODEL_NAME = os.getenv('MODEL_NAME', "yi-large")
 
 PROXY_LOGIN = os.getenv('PROXY_LOGIN')
 PROXY_PASSWORD = os.getenv('PROXY_PASSWORD')
@@ -34,11 +36,14 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 
+
+
 @retry(stop=stop_after_attempt(5), wait=tenacity.wait_fixed(60))
 async def get_response(text):
     try:
-        response = await g4f.ChatCompletion.create_async(
-            model="gpt-3.5-turbo",
+        client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
+        response = await client.chat.completions.create(
+            model=MODEL_NAME,
             messages=[{"role": "user", "content": f"""Сейчас ты играешь роль обычного пользователя в Telegram. 
             Я предоставлю тебе текст поста, на который ты должен будешь написать ОЧЕНЬ КРАТКИЙ ОБЗОР. Пиши кратко и эмоционально, как обычный пользователь.
             Вне зависимости от контекста предоставленного тебе текста поста ты должен написать ОЧЕНЬ КРАТКИЙ ОБЗОР на него. 
@@ -46,23 +51,22 @@ async def get_response(text):
             Если ты не знаешь, как написать ОЧЕНЬ КРАТКИЙ ОБЗОР на пост или текст поста пуст или не имеет никакого смысла, то ответь только: '...'. 
             Отвечай только на том языке, который используется в посте. Помни: ты не отвечаешь, а ПИШЕШЬ ОЧЕНЬ КРАТКИЙ ОБЗОР. Старайся именно НАПИСАТЬ ОЧЕНЬ КРАТКИЙ ОБЗОР.. 
             Будь саркастичным и остроумным, НАПИШИ НАЗВАНИЕ ОБЗОРА В НАЧАЛЕ, ОСТАВЬ ССЫЛКУ В КОНЦЕ, НЕ ИСПОЛЬЗУЙ СПЕЦСИМВОЛЫ. напиши ОБЗОР строго ДО 100 слов: 
-            
+
             `{text}`
             """}],
-            #provider=g4f.Provider.s,
-            proxy=f'http://{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_IP}:{PROXY_PORT}',
-            
         )
+        #proxy=f'http://{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_IP}:{PROXY_PORT}',
         print('\nGPT сделал пост уникальным \n')
-        return response
+        return response.choices[0].message.content
     except Exception as e:
         print(e)
         raise e
 
 
+# Остальные функции остаются без изменений
+
 @retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
 async def format_message(message: types.Message):
-    
     if not message.photo:
         text = message.text
         response = await get_response(text)
@@ -72,8 +76,8 @@ async def format_message(message: types.Message):
         text = message["caption"]
         response = await get_response(text)
         message.text = response
-        #print(message)
         return message
+
 
 @retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10))
 async def parse_rss_feed(url):
@@ -92,6 +96,7 @@ async def parse_rss_feed(url):
     print(f"\nrss спарсил пост: \n\n {post}")
     return post, link
 
+
 def add_post_to_db(msg_id, message_text):
     try:
         new_id = max(int(k) for k in db.keys()
@@ -105,10 +110,12 @@ def add_post_to_db(msg_id, message_text):
     return new_id
 
 
-@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10),
+       retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
 async def send_to_channel():
     urls = ["http://export.arxiv.org/rss/cs.AI", "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/"]
-    prev_ids = {"http://export.arxiv.org/rss/cs.AI": None, "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/": None}
+    prev_ids = {"http://export.arxiv.org/rss/cs.AI": None,
+                "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/": None}
 
     while True:
         for url in urls:
@@ -118,7 +125,9 @@ async def send_to_channel():
                 print(f"Failed to parse RSS feed {url}")
                 continue
 
-            rss_post_id = link.split('/')[-1].split('=')[1].split('&')[0] if url == "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/" else link.split('/')[-1]
+            rss_post_id = link.split('/')[-1].split('=')[1].split('&')[
+                0] if url == "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/all/" else link.split('/')[
+                -1]
 
             if rss_post_id is None:
                 print(f"rss_post_id is None for {url}, skipping")
@@ -131,7 +140,7 @@ async def send_to_channel():
                 continue
 
             prev_ids[url] = rss_post_id
-            
+
             msg = types.Message()
             msg.text = rss_post
             msg_id = msg.message_id
@@ -144,8 +153,10 @@ async def send_to_channel():
             except Exception as e:
                 print(f"Failed to send post {e}")
 
+
 @dp.channel_post_handler(regexp=r"\d+\+")
-@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10), retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
+@retry(stop=stop_after_attempt(3), wait=tenacity.wait_fixed(10),
+       retry=tenacity.retry_if_exception_type(ServerDisconnectedError))
 async def handle_post(message: types.Message):
     if message.chat and str(message.chat.id) == str(TELEGRAM_POST_BRIDGE):
         post_id = str(message.text).strip('+')
@@ -156,17 +167,19 @@ async def handle_post(message: types.Message):
         try:
             msg = types.Message()
             msg.text = post['message_text']
-            await bot.send_message(TELEGRAM_TARGET_CHANNEL,  text=msg.text)
+            await bot.send_message(TELEGRAM_TARGET_CHANNEL, text=msg.text)
             await bot.send_message(TELEGRAM_POST_BRIDGE, text='`SUCCESS`')
 
         except Exception as e:
             await bot.send_message(TELEGRAM_POST_BRIDGE, text='`ERROR`')
 
+
 async def main():
-   await asyncio.gather(
-       dp.start_polling(),
-       send_to_channel()
-   )
+    await asyncio.gather(
+        dp.start_polling(),
+        send_to_channel()
+    )
+
 
 if __name__ == '__main__':
-   asyncio.run(main())
+    asyncio.run(main())
