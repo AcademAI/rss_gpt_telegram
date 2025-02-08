@@ -4,3 +4,4 @@ data.txt
 .env
 data.db.data
 data.db.dir
+rss_feeds.db
